@@ -20,15 +20,15 @@ jobs:
       - name: Install dependencies
         run: sudo apt install -y cmake ninja-build openjdk-17-jdk wget unzip build-essential git python3-mako
 
-      - name: Install Gradle 7.4.1
+      - name: Install Gradle 7.5
         run: |
           sudo apt remove --purge -y gradle || true
           sudo apt autoremove -y || true
           sudo rm -rf /usr/bin/gradle /usr/local/bin/gradle /opt/gradle ~/.gradle
-          wget https://services.gradle.org/distributions/gradle-7.4.1-bin.zip
-          sudo unzip -d /opt/gradle gradle-7.4.1-bin.zip
-          echo "export PATH=/opt/gradle/gradle-7.4.1/bin:$PATH" >> $GITHUB_PATH
-          export PATH=/opt/gradle/gradle-7.4.1/bin:$PATH
+          wget https://services.gradle.org/distributions/gradle-7.5-bin.zip
+          sudo unzip -d /opt/gradle gradle-7.5-bin.zip
+          echo "export PATH=/opt/gradle/gradle-7.5/bin:$PATH" >> $GITHUB_PATH
+          export PATH=/opt/gradle/gradle-7.5/bin:$PATH
           gradle --version
 
       - name: Install Android SDK
@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-          export PATH=/opt/gradle/gradle-7.4.1/bin:$JAVA_HOME/bin:$PATH
+          export PATH=/opt/gradle/gradle-7.5/bin:$JAVA_HOME/bin:$PATH
           unset ANDROID_SDK_ROOT
           export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
           cd $GITHUB_WORKSPACE/android
