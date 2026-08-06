@@ -1,4 +1,4 @@
-name: Build Android
+name: Build All
 
 on:
   workflow_dispatch:
@@ -12,18 +12,12 @@ permissions:
 
 jobs:
   build_android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04  # 使用旧版 Ubuntu 镜像
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add gradle PPA
-        run: sudo add-apt-repository ppa:cwchien/gradle -y
-
-      - name: Update repositories
-        run: sudo apt update
-
-      - name: Install packages
+      - name: Install dependencies
         run: sudo apt install -y cmake ninja-build openjdk-11-jdk wget unzip gradle build-essential git python3-mako
 
       - name: Install Android SDK
