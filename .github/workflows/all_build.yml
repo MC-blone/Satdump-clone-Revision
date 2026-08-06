@@ -1,4 +1,4 @@
-name: Build All
+name: Build Android
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
         run: unset ANDROID_SDK_ROOT && export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux && cd $GITHUB_WORKSPACE/android && gradle assembleDebug
 
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: SatDump-debug.apk
           path: ${{runner.workspace}}/SatDump/android/app/build/outputs/apk/debug/app-debug.apk
