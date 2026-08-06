@@ -2,18 +2,8 @@ name: Build All
 
 on:
   workflow_dispatch:
-    inputs:
-      skip_build:
-        description: 'Skip build (just pass)'
-        required: true
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -23,49 +13,34 @@ permissions:
 jobs:
   build_android:
     runs-on: ubuntu-latest
-    if: github.event.inputs.skip_build == 'false'
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Skip build message
-        if: github.event.inputs.skip_build == 'true'
-        run: echo "Build skipped as requested"
-
       - name: Add gradle PPA
-        if: github.event.inputs.skip_build == 'false'
         run: sudo add-apt-repository ppa:cwchien/gradle -y
 
       - name: Update repositories
-        if: github.event.inputs.skip_build == 'false'
         run: sudo apt update
 
       - name: Install packages
-        if: github.event.inputs.skip_build == 'false'
         run: sudo apt install -y cmake ninja-build openjdk-11-jdk wget unzip gradle build-essential git python3-mako
 
-      # Setup Android SDK, and auto-accept licenses
       - name: Install Android SDK
-        if: github.event.inputs.skip_build == 'false'
         run: wget --quiet --output-document=android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip && mkdir android-sdk-linux && unzip -qq android-sdk.zip -d android-sdk-linux && export ANDROID_HOME=./android-sdk-linux && echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --update && (echo y; echo y; echo y; echo y; echo y; echo y; echo y; echo y) | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --licenses
 
-      # Call SDKManager to install the Android NDK
       - name: Install Android NDK
-        if: github.event.inputs.skip_build == 'false'
         run: $GITHUB_WORKSPACE/android-sdk-linux/cmdline-tools/bin/sdkmanager --sdk_root=$GITHUB_WORKSPACE/android-sdk-linux --install "ndk;25.2.9519653" --channel=3
 
       - name: Build dependencies
-        if: github.event.inputs.skip_build == 'false'
         shell: bash
         run: git submodule update --init && cd $GITHUB_WORKSPACE/android/deps && export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux && sh build.sh
 
       - name: Build
-        if: github.event.inputs.skip_build == 'false'
         shell: bash
         run: unset ANDROID_SDK_ROOT && export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux && cd $GITHUB_WORKSPACE/android && gradle assembleDebug
 
       - name: Upload APK
-        if: github.event.inputs.skip_build == 'false'
         uses: actions/upload-artifact@v3
         with:
           name: SatDump-debug.apk
