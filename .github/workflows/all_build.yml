@@ -24,11 +24,10 @@ jobs:
         run: |
           wget https://services.gradle.org/distributions/gradle-7.6-bin.zip
           sudo unzip -d /opt/gradle gradle-7.6-bin.zip
-          # ⭐ 关键：把 Gradle 7.6 加到 PATH 最前面，覆盖系统自带的 9.6.1
           echo "export PATH=/opt/gradle/gradle-7.6/bin:$PATH" >> $GITHUB_PATH
 
       - name: Verify Gradle version
-        run: gradle --version  # 应该显示 Gradle 7.6
+        run: gradle --version
 
       - name: Install Android SDK
         run: wget --quiet --output-document=android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip && mkdir android-sdk-linux && unzip -qq android-sdk.zip -d android-sdk-linux && export ANDROID_HOME=./android-sdk-linux && echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --update && (echo y; echo y; echo y; echo y; echo y; echo y; echo y; echo y) | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --licenses
@@ -42,7 +41,13 @@ jobs:
 
       - name: Build
         shell: bash
-        run: unset ANDROID_SDK_ROOT && export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux && cd $GITHUB_WORKSPACE/android && gradle assembleDebug
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          unset ANDROID_SDK_ROOT
+          export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
+          cd $GITHUB_WORKSPACE/android
+          gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
