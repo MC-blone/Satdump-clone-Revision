@@ -12,13 +12,19 @@ permissions:
 
 jobs:
   build_android:
-    runs-on: ubuntu-20.04  # 使用旧版 Ubuntu 镜像
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt install -y cmake ninja-build openjdk-11-jdk wget unzip gradle build-essential git python3-mako
+        run: sudo apt install -y cmake ninja-build openjdk-11-jdk wget unzip build-essential git python3-mako
+
+      - name: Install Gradle 7.4.1
+        run: |
+          wget https://services.gradle.org/distributions/gradle-7.4.1-bin.zip
+          sudo unzip -d /opt/gradle gradle-7.4.1-bin.zip
+          echo "export PATH=/opt/gradle/gradle-7.4.1/bin:$PATH" >> $GITHUB_PATH
 
       - name: Install Android SDK
         run: wget --quiet --output-document=android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip && mkdir android-sdk-linux && unzip -qq android-sdk.zip -d android-sdk-linux && export ANDROID_HOME=./android-sdk-linux && echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --update && (echo y; echo y; echo y; echo y; echo y; echo y; echo y; echo y) | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --licenses
