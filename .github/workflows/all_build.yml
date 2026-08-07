@@ -37,180 +37,24 @@ jobs:
       - name: Install Android NDK
         run: $GITHUB_WORKSPACE/android-sdk-linux/cmdline-tools/bin/sdkmanager --sdk_root=$GITHUB_WORKSPACE/android-sdk-linux --install "ndk;25.2.9519653" --channel=3
 
-      - name: Setup NDK environment
+      - name: Fix build.sh and build dependencies
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux" >> $GITHUB_ENV
-          echo "NDK=$GITHUB_WORKSPACE/android-sdk-linux/ndk/25.2.9519653" >> $GITHUB_ENV
-
-      - name: Build dependencies (sqlite, hdf5, and others)
-        run: |
-          export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
-          export NDK=$ANDROID_HOME/ndk/25.2.9519653
-          export OUTPUT_DIR=$GITHUB_WORKSPACE/android/deps/output
+          cd $GITHUB_WORKSPACE/android/deps
           
-          # 创建输出目录
-          mkdir -p $OUTPUT_DIR
-
-          # CMake 工具链函数
-          get_cmake_command() {
-            echo "-DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=$1 -DANDROID_PLATFORM=android-24"
-          }
-
-          # 编译函数
-          build_lib() {
-            local lib_name=$1
-            local abi=$2
-            local build_dir=$3
-            local cmake_args=$4
-            
-            echo "--- Building $lib_name for $abi"
-            mkdir -p $build_dir
-            cd $build_dir
-            cmake $(get_cmake_command $abi) $cmake_args -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ..
-            make -j$(nproc) install
-            cd -
-          }
-
-          # 1. wolfssl
-          git clone https://github.com/wolfSSL/wolfssl --depth 1 -b v5.7.2-stable
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p wolfssl/build/$abi
-            cd wolfssl/build/$abi
-            cmake $(get_cmake_command $abi) -DBUILD_SHARED_LIBS=OFF -DWOLFSSL_CURL=ON -DWOLFSSL_CRYPT_TESTS=OFF -DWOLFSSL_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf wolfssl
-
-          # 2. curl
-          git clone https://github.com/curl/curl --depth 1 -b curl-8_9_1
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p curl/build/$abi
-            cd curl/build/$abi
-            cmake $(get_cmake_command $abi) -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi -DHTTP_ONLY=ON -DBUILD_STATIC_LIBS=ON -DCURL_USE_WOLFSSL=ON -DUSE_LIBIDN2=OFF -DWolfSSL_INCLUDE_DIR=$OUTPUT_DIR/$abi/include -DWolfSSL_LIBRARY=$OUTPUT_DIR/$abi/lib/libwolfssl.a ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf curl
-
-          # 3. cpu_features
-          git clone https://github.com/google/cpu_features --depth 1 -b v0.9.0
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p cpu_features/build/$abi
-            cd cpu_features/build/$abi
-            cmake $(get_cmake_command $abi) -DBUILD_TESTING=OFF -DBUILD_EXECUTABLE=OFF -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf cpu_features
-
-          # 4. volk
-          git clone https://github.com/gnuradio/volk --depth 1 -b v3.1.2
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p volk/build/$abi
-            cd volk/build/$abi
-            cmake $(get_cmake_command $abi) -DENABLE_TESTING=OFF -DENABLE_MODTOOL=OFF -DENABLE_STATIC_LIBS=ON -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf volk
-
-          # 5. zlib
-          git clone https://github.com/madler/zlib --depth 1 -b v1.3.1
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p zlib/build/$abi
-            cd zlib/build/$abi
-            cmake $(get_cmake_command $abi) -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf zlib
-
-          # 6. libpng
-          git clone https://github.com/glennrp/libpng --depth 1 -b v1.6.43
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p libpng/build/$abi
-            cd libpng/build/$abi
-            cmake $(get_cmake_command $abi) -DPNG_EXECUTABLES=OFF -DPNG_TESTS=OFF -DPNG_SHARED=OFF -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf libpng
-
-          # 7. fftw3
-          wget http://www.fftw.org/fftw-3.3.10.tar.gz
-          tar -zxvf fftw-3.3.10.tar.gz
-          mv fftw-3.3.10 fftw3
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p fftw3/build/$abi
-            cd fftw3/build/$abi
-            cmake $(get_cmake_command $abi) -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi -DBUILD_SHARED_LIBS=OFF -DENABLE_FLOAT=ON ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf fftw3
-
-          # 8. nng
-          git clone https://github.com/nanomsg/nng --depth 1 -b v1.8.0
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p nng/build/$abi
-            cd nng/build/$abi
-            cmake $(get_cmake_command $abi) -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi -DNNG_TOOLS=OFF -DNNG_TESTS=OFF -DNNG_ENABLE_NNGCAT=OFF ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf nng
-
-          # 9. sqlite (修复版)
-          git clone https://github.com/R1NC/sqlite --depth 1 -b master
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p sqlite/build/$abi
-            cd sqlite/build/$abi
-            cmake $(get_cmake_command $abi) -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi -DBUILD_SHARED_LIBS=OFF ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf sqlite
-
-          # 10. zstd
-          git clone https://github.com/facebook/zstd --depth 1 -b v1.5.6
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p zstd/build2/$abi
-            cd zstd/build2/$abi
-            cmake $(get_cmake_command $abi) -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_STATIC=ON -DZSTD_BUILD_SHARED=OFF -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../../../build/cmake
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf zstd
-
-          # 11. libtiff
-          git clone https://github.com/libsdl-org/libtiff --depth 1 -b v4.6.0
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p libtiff/build2/$abi
-            cd libtiff/build2/$abi
-            cmake $(get_cmake_command $abi) -DBUILD_SHARED_LIBS=OFF -Dtiff-tools=OFF -Dtiff-tests=OFF -Dtiff-docs=OFF -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf libtiff
-
-          # 12. hdf5 (修复版 - 使用正确的标签)
-          git clone https://github.com/HDFGroup/hdf5 --depth 1 -b hdf5-1_14_3
-          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
-            mkdir -p hdf5/build2/$abi
-            cd hdf5/build2/$abi
-            cmake $(get_cmake_command $abi) -DBUILD_SHARED_LIBS=OFF -DHDF5_BUILD_CPP_LIB=ON -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR/$abi ../..
-            make -j$(nproc) install
-            cd ../../..
-          done
-          rm -rf hdf5
-
-          echo "All dependencies built successfully!"
-
-      - name: Verify libraries
-        run: |
-          ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a
-          ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libhdf5.a
+          # 修复 sqlite 编译参数（移除错误的 NNG 参数）
+          sed -i 's/-DNNG_TOOLS=OFF -DNNG_TESTS=OFF -DNNG_ENABLE_NNGCAT=OFF//g' build.sh
+          
+          # 修复 hdf5 标签（2.0.0 不存在，改成 hdf5-1_14_3）
+          sed -i 's/2.0.0/hdf5-1_14_3/g' build.sh
+          
+          # 修复 volk 子模块问题（在 build_volk 前添加子模块初始化）
+          sed -i '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init && cd ..' build.sh
+          
+          echo "build.sh 已修复，开始编译依赖..."
+          
+          export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
+          sh build.sh
 
       - name: Build
         shell: bash
