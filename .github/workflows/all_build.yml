@@ -40,6 +40,9 @@ jobs:
       - name: Fix build.sh and build dependencies
         shell: bash
         run: |
+          # ⭐ 关键：先初始化子模块，拉取 android/deps 内容
+          git submodule update --init
+          
           cd $GITHUB_WORKSPACE/android/deps
           
           # 修复 sqlite 编译参数（移除错误的 NNG 参数）
