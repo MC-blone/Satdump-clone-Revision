@@ -40,9 +40,7 @@ jobs:
       - name: Fix build.sh and build dependencies
         shell: bash
         run: |
-          # ⭐ 关键：先初始化子模块，拉取 android/deps 内容
           git submodule update --init
-          
           cd $GITHUB_WORKSPACE/android/deps
           
           # 修复 sqlite 编译参数（移除错误的 NNG 参数）
@@ -51,13 +49,42 @@ jobs:
           # 修复 hdf5 标签（2.0.0 不存在，改成 hdf5-1_14_3）
           sed -i 's/2.0.0/hdf5-1_14_3/g' build.sh
           
-          # 修复 volk 子模块问题（在 build_volk 前添加子模块初始化）
+          # 修复 volk 子模块问题
           sed -i '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init && cd ..' build.sh
           
           echo "build.sh 已修复，开始编译依赖..."
-          
           export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
           sh build.sh
+
+      - name: Fix and verify SQLite library
+        run: |
+          # 检查文件是否存在
+          ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/ || true
+          
+          # 如果 sqlite 编译失败，手动编译安装
+          if [ ! -f "$GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a" ]; then
+            echo "SQLite library not found, building manually..."
+            cd $GITHUB_WORKSPACE/android/deps
+            
+            rm -rf sqlite
+            git clone https://github.com/R1NC/sqlite --depth 1 -b master
+            cd sqlite
+            mkdir -p build && cd build
+            
+            export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
+            export NDK=$ANDROID_HOME/ndk/25.2.9519653
+            
+            cmake -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+                  -DANDROID_ABI=arm64-v8a \
+                  -DANDROID_PLATFORM=android-24 \
+                  -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/android/deps/output/arm64-v8a \
+                  -DBUILD_SHARED_LIBS=OFF \
+                  ..
+            make -j$(nproc) install
+          fi
+          
+          # 验证
+          ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a
 
       - name: Build
         shell: bash
