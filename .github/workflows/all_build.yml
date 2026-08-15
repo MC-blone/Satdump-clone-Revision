@@ -43,11 +43,11 @@ jobs:
           git submodule update --init
           cd $GITHUB_WORKSPACE/android/deps
           
+          # 修复 SQLite 仓库地址（使用官方仓库）
+          sed -i 's|https://github.com/R1NC/sqlite|https://github.com/sqlite/sqlite|g' build.sh
+          
           # 修复 sqlite 编译参数（移除错误的 NNG 参数）
           sed -i 's/-DNNG_TOOLS=OFF -DNNG_TESTS=OFF -DNNG_ENABLE_NNGCAT=OFF//g' build.sh
-          
-          # 修复 hdf5 标签（2.0.0 不存在，改成 hdf5-1_14_3）
-          sed -i 's/2.0.0/hdf5-1_14_3/g' build.sh
           
           # 修复 volk 子模块问题
           sed -i '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init && cd ..' build.sh
@@ -58,16 +58,12 @@ jobs:
 
       - name: Fix and verify SQLite library
         run: |
-          # 检查文件是否存在
-          ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/ || true
-          
-          # 如果 sqlite 编译失败，手动编译安装
           if [ ! -f "$GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a" ]; then
             echo "SQLite library not found, building manually..."
             cd $GITHUB_WORKSPACE/android/deps
             
             rm -rf sqlite
-            git clone https://github.com/R1NC/sqlite --depth 1 -b master
+            git clone https://github.com/sqlite/sqlite.git --depth 1
             cd sqlite
             mkdir -p build && cd build
             
@@ -81,9 +77,10 @@ jobs:
                   -DBUILD_SHARED_LIBS=OFF \
                   ..
             make -j$(nproc) install
+          else
+            echo "SQLite library already exists"
           fi
           
-          # 验证
           ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a
 
       - name: Build
