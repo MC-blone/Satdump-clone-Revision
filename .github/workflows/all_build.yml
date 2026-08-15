@@ -43,17 +43,9 @@ jobs:
           git submodule update --init
           cd $GITHUB_WORKSPACE/android/deps
           
-          # 修复 SQLite 仓库地址
           sed -i 's|https://github.com/R1NC/sqlite|https://github.com/sqlite/sqlite|g' build.sh
-          
-          # 修复 sqlite 编译参数
           sed -i 's/-DNNG_TOOLS=OFF -DNNG_TESTS=OFF -DNNG_ENABLE_NNGCAT=OFF//g' build.sh
-          
-          # 修复 volk 子模块问题
           sed -i '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init && cd ..' build.sh
-          
-          # ⭐ 关键优化：只保留 arm64-v8a，删除其他架构
-          # 把所有 for abi in armeabi-v7a arm64-v8a x86 x86_64; do 改成 for abi in arm64-v8a; do
           sed -i 's/for abi in armeabi-v7a arm64-v8a x86 x86_64/for abi in arm64-v8a/g' build.sh
           
           echo "build.sh 已修复，开始编译依赖（仅 arm64-v8a）..."
@@ -79,7 +71,7 @@ jobs:
                   -DANDROID_PLATFORM=android-24 \
                   -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/android/deps/output/arm64-v8a \
                   -DBUILD_SHARED_LIBS=OFF \
-                  ..
+                  ../build/cmake
             make -j$(nproc) install
           else
             echo "SQLite library already exists"
