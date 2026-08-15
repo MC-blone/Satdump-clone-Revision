@@ -37,22 +37,26 @@ jobs:
       - name: Install Android NDK
         run: $GITHUB_WORKSPACE/android-sdk-linux/cmdline-tools/bin/sdkmanager --sdk_root=$GITHUB_WORKSPACE/android-sdk-linux --install "ndk;25.2.9519653" --channel=3
 
-      - name: Fix build.sh and build dependencies
+      - name: Fix build.sh and build dependencies (arm64-v8a only)
         shell: bash
         run: |
           git submodule update --init
           cd $GITHUB_WORKSPACE/android/deps
           
-          # 修复 SQLite 仓库地址（使用官方仓库）
+          # 修复 SQLite 仓库地址
           sed -i 's|https://github.com/R1NC/sqlite|https://github.com/sqlite/sqlite|g' build.sh
           
-          # 修复 sqlite 编译参数（移除错误的 NNG 参数）
+          # 修复 sqlite 编译参数
           sed -i 's/-DNNG_TOOLS=OFF -DNNG_TESTS=OFF -DNNG_ENABLE_NNGCAT=OFF//g' build.sh
           
           # 修复 volk 子模块问题
           sed -i '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init && cd ..' build.sh
           
-          echo "build.sh 已修复，开始编译依赖..."
+          # ⭐ 关键优化：只保留 arm64-v8a，删除其他架构
+          # 把所有 for abi in armeabi-v7a arm64-v8a x86 x86_64; do 改成 for abi in arm64-v8a; do
+          sed -i 's/for abi in armeabi-v7a arm64-v8a x86 x86_64/for abi in arm64-v8a/g' build.sh
+          
+          echo "build.sh 已修复，开始编译依赖（仅 arm64-v8a）..."
           export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
           sh build.sh
 
