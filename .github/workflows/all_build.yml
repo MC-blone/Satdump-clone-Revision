@@ -32,12 +32,19 @@ jobs:
           gradle --version
 
       - name: Install Android SDK
-        run: wget --quiet --output-document=android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip && mkdir android-sdk-linux && unzip -qq android-sdk.zip -d android-sdk-linux && export ANDROID_HOME=./android-sdk-linux && echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --update && (echo y; echo y; echo y; echo y; echo y; echo y; echo y; echo y) | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --licenses
+        run: |
+          wget --quiet --output-document=android-sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
+          mkdir android-sdk-linux
+          unzip -qq android-sdk.zip -d android-sdk-linux
+          export ANDROID_HOME=./android-sdk-linux
+          echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --update
+          (echo y; echo y; echo y; echo y; echo y; echo y; echo y; echo y) | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=android-sdk-linux --licenses
 
       - name: Install Android NDK
-        run: $GITHUB_WORKSPACE/android-sdk-linux/cmdline-tools/bin/sdkmanager --sdk_root=$GITHUB_WORKSPACE/android-sdk-linux --install "ndk;25.2.9519653" --channel=3
+        run: |
+          $GITHUB_WORKSPACE/android-sdk-linux/cmdline-tools/bin/sdkmanager --sdk_root=$GITHUB_WORKSPACE/android-sdk-linux --install "ndk;25.2.9519653" --channel=3
 
-      - name: Fix build.sh and build dependencies (arm64-v8a only)
+      - name: Fix build.sh and build dependencies
         shell: bash
         run: |
           git submodule update --init
@@ -48,49 +55,89 @@ jobs:
           sed -i '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init && cd ..' build.sh
           sed -i 's/for abi in armeabi-v7a arm64-v8a x86 x86_64/for abi in arm64-v8a/g' build.sh
           
-          echo "build.sh 已修复，开始编译依赖（仅 arm64-v8a）..."
           export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
           sh build.sh
 
-      - name: Fix and verify SQLite library
+      - name: Build SQLite library
+        shell: bash
         run: |
-          if [ ! -f "$GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a" ]; then
-            echo "SQLite library not found, building manually..."
-            cd $GITHUB_WORKSPACE/android/deps
-            
-            rm -rf sqlite
-            git clone https://github.com/sqlite/sqlite.git --depth 1
-            cd sqlite
-            mkdir -p build && cd build
-            
-            export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
-            export NDK=$ANDROID_HOME/ndk/25.2.9519653
-            
-            cmake -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
-                  -DANDROID_ABI=arm64-v8a \
-                  -DANDROID_PLATFORM=android-24 \
-                  -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/android/deps/output/arm64-v8a \
-                  -DBUILD_SHARED_LIBS=OFF \
-                  ../build/cmake
-            make -j$(nproc) install
-          else
+          export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
+          export NDK=$ANDROID_HOME/ndk/25.2.9519653
+          export OUTPUT_DIR=$GITHUB_WORKSPACE/android/deps/output/arm64-v8a
+          
+          if [ -f "$OUTPUT_DIR/lib/libsqlite3.a" ]; then
             echo "SQLite library already exists"
+            ls -la "$OUTPUT_DIR/lib/libsqlite3.a"
+            exit 0
           fi
           
-          ls -la $GITHUB_WORKSPACE/android/deps/output/arm64-v8a/lib/libsqlite3.a
+          cd $GITHUB_WORKSPACE/android/deps
+          rm -rf sqlite
+          git clone https://github.com/sqlite/sqlite.git --depth 1
+          cd sqlite
+          mkdir -p build && cd build
+          
+          cmake -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+                -DANDROID_ABI=arm64-v8a \
+                -DANDROID_PLATFORM=android-24 \
+                -DCMAKE_INSTALL_PREFIX=$OUTPUT_DIR \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DCMAKE_BUILD_TYPE=Release \
+                ../build/cmake
+          
+          make -j$(nproc)
+          make install
+          
+          cd $GITHUB_WORKSPACE
+          
+          if [ -f "$OUTPUT_DIR/lib/libsqlite3.a" ]; then
+            echo "SQLite library built successfully"
+            ls -la "$OUTPUT_DIR/lib/libsqlite3.a"
+          else
+            find $GITHUB_WORKSPACE/android/deps -name "libsqlite3.a" -exec cp -v {} $OUTPUT_DIR/lib/ \;
+            
+            if [ ! -f "$OUTPUT_DIR/lib/libsqlite3.a" ]; then
+              echo "ERROR: Failed to build SQLite library"
+              exit 1
+            fi
+          fi
 
-      - name: Build
+      - name: Verify dependencies
+        run: |
+          export OUTPUT_DIR=$GITHUB_WORKSPACE/android/deps/output/arm64-v8a
+          
+          for lib in libsqlite3.a libvolk.a libnng.a; do
+            if [ -f "$OUTPUT_DIR/lib/$lib" ]; then
+              echo "Found: $lib"
+              ls -la "$OUTPUT_DIR/lib/$lib"
+            else
+              echo "Missing: $lib"
+            fi
+          done
+
+      - name: Build APK
         shell: bash
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
           export PATH=/opt/gradle/gradle-7.5/bin:$JAVA_HOME/bin:$PATH
-          unset ANDROID_SDK_ROOT
           export ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk-linux
+          unset ANDROID_SDK_ROOT
+          
           cd $GITHUB_WORKSPACE/android
-          gradle assembleDebug
+          gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SatDump-debug.apk
-          path: ${{runner.workspace}}/SatDump/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ github.workspace }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ${{ github.workspace }}/android/deps/output/**/*.log
+            ${{ github.workspace }}/android/build.log
