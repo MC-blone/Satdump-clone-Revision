@@ -150,15 +150,15 @@ namespace fy4
             {
                 if (std::filesystem::exists(input_file_path))
                 {
-                    total_bytes =
+                    total_bytes.store(
                         static_cast<uint64_t>(
                             std::filesystem::file_size(
-                                input_file_path));
+                                input_file_path)));
                 }
             }
             catch (...)
             {
-                total_bytes = 0;
+                total_bytes.store(0);
             }
         }
 
@@ -215,7 +215,7 @@ namespace fy4
 
             if (key_path.empty())
             {
-                logger->warning(
+                logger->error(
                     "FY-4 EncryptionKeyMessage.bin was not found. "
                     "Encrypted LRIT files will be preserved but not decrypted.");
 
@@ -227,7 +227,7 @@ namespace fy4
 
             if (!readFile(key_path, data))
             {
-                logger->warning(
+                logger->error(
                     "Unable to read FY-4 encryption key file: " +
                     key_path);
 
@@ -237,7 +237,7 @@ namespace fy4
 
             if (data.size() < 2)
             {
-                logger->warning(
+                logger->error(
                     "FY-4 encryption key file is too small: " +
                     key_path);
 
@@ -267,7 +267,7 @@ namespace fy4
 
             if (data.size() < required)
             {
-                logger->warning(
+                logger->error(
                     "FY-4 encryption key file is truncated. "
                     "Expected at least " +
                     std::to_string(required) +
@@ -305,9 +305,10 @@ namespace fy4
 
                 decryption_keys.swap(
                     new_keys);
-            }
 
-            keys_loaded = !decryption_keys.empty();
+                keys_loaded =
+                    !decryption_keys.empty();
+            }
 
             if (keys_loaded)
             {
@@ -319,7 +320,7 @@ namespace fy4
             }
             else
             {
-                logger->warning(
+                logger->error(
                     "FY-4 encryption key file contains no usable keys.");
             }
 
@@ -357,7 +358,7 @@ namespace fy4
                     key_index,
                     key))
             {
-                logger->warning(
+                logger->error(
                     "No FY-4 DES key found for key index " +
                     std::to_string(key_index) +
                     ". Keeping encrypted file.");
@@ -367,7 +368,7 @@ namespace fy4
 
             if (file.lrit_data.empty())
             {
-                logger->warning(
+                logger->error(
                     "Encrypted FY-4 LRIT file contains no data: " +
                     file.filename);
 
@@ -631,23 +632,23 @@ namespace fy4
             createDirectory(
                 directory + "/IMAGES");
 
-            bytes_received = 0;
-
-            total_bytes = 0;
+            bytes_received.store(0);
+            total_bytes.store(0);
 
             try
             {
                 if (std::filesystem::exists(
                         input_file_path))
                 {
-                    total_bytes =
+                    total_bytes.store(
                         static_cast<uint64_t>(
                             std::filesystem::file_size(
-                                input_file_path));
+                                input_file_path)));
                 }
             }
             catch (...)
             {
+                total_bytes.store(0);
             }
 
             /*
@@ -729,14 +730,20 @@ namespace fy4
                     cadu,
                     sizeof(cadu));
 
-                bytes_received +=
-                    sizeof(cadu);
+                bytes_received.fetch_add(
+                    sizeof(cadu));
 
-                if (total_bytes > 0 &&
-                    bytes_received > total_bytes)
+                uint64_t current_received =
+                    bytes_received.load();
+
+                uint64_t current_total =
+                    total_bytes.load();
+
+                if (current_total > 0 &&
+                    current_received > current_total)
                 {
-                    bytes_received =
-                        total_bytes;
+                    bytes_received.store(
+                        current_total);
                 }
 
                 std::vector<
@@ -829,9 +836,9 @@ namespace fy4
         {
             return std::make_shared<
                 FY4LRITDataDecoderModule>(
-                    input_file,
-                    output_file_hint,
-                    parameters);
+                input_file,
+                output_file_hint,
+                parameters);
         }
     }
 }
