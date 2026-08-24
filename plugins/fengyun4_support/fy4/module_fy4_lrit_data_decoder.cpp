@@ -1,161 +1,164 @@
 #include "module_fy4_lrit_data_decoder.h"
+
 #include "common/utils.h"
 #include "core/resources.h"
-#include "image/io.h"
 #include "imgui/imgui.h"
 #include "imgui/imgui_image.h"
 #include "logger.h"
 #include "xrit/fy4/fy4_headers.h"
 #include "xrit/processor/xrit_channel_processor_render.h"
 #include "xrit/transport/xrit_demux.h"
+
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <algorithm>
-#include <vector>
+#include <iomanip>
+#include <sstream>
 
 namespace fy4
 {
     namespace lrit
     {
-        // DES S-boxes
-        static const int S_BOXES[8][4][16] = {
-            {{14,4,13,1,2,15,11,8,3,10,6,12,5,9,0,7},
-             {0,15,7,4,14,2,13,1,10,6,12,11,9,5,3,8},
-             {4,1,14,8,13,6,2,11,15,12,9,7,3,10,5,0},
-             {15,12,8,2,4,9,1,7,5,11,3,14,10,0,6,13}},
-            {{15,1,8,14,6,11,3,4,9,7,2,13,12,0,5,10},
-             {3,13,4,7,15,2,8,14,12,0,1,10,6,9,11,5},
-             {0,14,7,11,10,4,13,1,5,8,12,6,9,3,2,15},
-             {13,8,10,1,3,15,4,2,11,6,7,12,0,5,14,9}},
-            {{10,0,9,14,6,3,15,5,1,13,12,7,11,4,2,8},
-             {13,7,0,9,3,4,6,10,2,8,5,14,12,11,15,1},
-             {13,6,4,9,8,15,3,0,11,1,2,12,5,10,14,7},
-             {1,10,13,0,6,9,8,7,4,15,14,3,11,5,2,12}},
-            {{7,13,14,3,0,6,9,10,1,2,8,5,11,12,4,15},
-             {13,8,11,5,6,15,0,3,4,7,2,12,1,10,14,9},
-             {10,6,9,0,12,11,7,13,15,1,3,14,5,2,8,4},
-             {3,15,0,6,10,1,13,8,9,4,5,11,12,7,2,14}},
-            {{2,12,4,1,7,10,11,6,8,5,3,15,13,0,14,9},
-             {14,11,2,12,4,7,13,1,5,0,15,10,3,9,8,6},
-             {4,2,1,11,10,13,7,8,15,9,12,5,6,3,0,14},
-             {11,8,12,7,1,14,2,13,6,15,0,9,10,4,5,3}},
-            {{12,1,10,15,9,2,6,8,0,13,3,4,14,7,5,11},
-             {10,15,4,2,7,12,9,5,6,1,13,14,0,11,3,8},
-             {9,14,15,5,2,8,12,3,7,0,4,10,1,13,11,6},
-             {4,3,2,12,9,5,15,10,11,14,1,7,6,0,8,13}},
-            {{4,11,2,14,15,0,8,13,3,12,9,7,5,10,6,1},
-             {13,0,11,7,4,9,1,10,14,3,5,12,2,15,8,6},
-             {1,4,11,13,12,3,7,14,10,15,6,8,0,5,9,2},
-             {6,11,13,8,1,4,10,7,9,5,0,15,14,2,3,12}},
-            {{13,2,8,4,6,15,11,1,10,9,3,14,5,0,12,7},
-             {1,15,13,8,10,3,7,4,12,5,6,11,0,14,9,2},
-             {7,11,4,1,9,12,14,2,0,6,10,13,15,3,5,8},
-             {2,1,14,7,4,10,8,13,15,12,9,0,3,5,6,11}}
-        };
+        namespace
+        {
+            static std::string makeHex(
+                const std::vector<uint8_t> &data)
+            {
+                std::ostringstream ss;
 
-        // Permutation tables
-        static const int IP[64] = {58,50,42,34,26,18,10,2,60,52,44,36,28,20,12,4,62,54,46,38,30,22,14,6,64,56,48,40,32,24,16,8,57,49,41,33,25,17,9,1,59,51,43,35,27,19,11,3,61,53,45,37,29,21,13,5,63,55,47,39,31,23,15,7};
-        static const int FP[64] = {40,8,48,16,56,24,64,32,39,7,47,15,55,23,63,31,38,6,46,14,54,22,62,30,37,5,45,13,53,21,61,29,36,4,44,12,52,20,60,28,35,3,43,11,51,19,59,27,34,2,42,10,50,18,58,26,33,1,41,9,49,17,57,25};
-        static const int E[48] = {32,1,2,3,4,5,4,5,6,7,8,9,8,9,10,11,12,13,12,13,14,15,16,17,16,17,18,19,20,21,20,21,22,23,24,25,24,25,26,27,28,29,28,29,30,31,32,1};
-        static const int P[32] = {16,7,20,21,29,12,28,17,1,15,23,26,5,18,31,10,2,8,24,14,32,27,3,9,19,13,30,6,22,11,4,25};
-        static const int PC1[56] = {57,49,41,33,25,17,9,1,58,50,42,34,26,18,10,2,59,51,43,35,27,19,11,3,60,52,44,36,63,55,47,39,31,23,15,7,62,54,46,38,30,22,14,6,61,53,45,37,29,21,13,5,28,20,12,4};
-        static const int PC2[48] = {14,17,11,24,1,5,3,28,15,6,21,10,23,19,12,4,26,8,16,7,27,20,13,2,41,52,31,37,47,55,30,40,51,45,33,48,44,49,39,56,34,53,46,42,50,36,29,32};
-        static const int SHIFTS[16] = {1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1};
+                ss << std::hex
+                   << std::setfill('0');
 
-        static uint64_t permute_bits(uint64_t value, const int* table, int input_bits) {
-            uint64_t result = 0;
-            for (int i = 0; i < 64 && table[i] > 0; i++) {
-                result = (result << 1) | ((value >> (input_bits - table[i])) & 1);
-            }
-            return result;
-        }
-
-        static std::vector<uint64_t> build_subkeys(uint64_t key) {
-            uint64_t key56 = permute_bits(key, PC1, 64);
-            
-            uint32_t c = key56 >> 28;
-            uint32_t d = key56 & 0x0FFFFFFF;
-            
-            std::vector<uint64_t> subkeys;
-            for (int i = 0; i < 16; i++) {
-                int shift = SHIFTS[i];
-                c = ((c << shift) & 0x0FFFFFFF) | (c >> (28 - shift));
-                d = ((d << shift) & 0x0FFFFFFF) | (d >> (28 - shift));
-                uint64_t combined = ((uint64_t)c << 28) | d;
-                subkeys.push_back(permute_bits(combined, PC2, 56));
-            }
-            return subkeys;
-        }
-
-        static uint64_t des_decrypt_block(uint64_t block, const std::vector<uint64_t>& subkeys) {
-            block = permute_bits(block, IP, 64);
-            
-            uint32_t left = block >> 32;
-            uint32_t right = block & 0xFFFFFFFF;
-            
-            for (int i = 15; i >= 0; i--) {
-                uint64_t expanded = permute_bits(right, E, 32);
-                uint64_t mixed = expanded ^ subkeys[i];
-                
-                uint32_t s_result = 0;
-                for (int box_idx = 0; box_idx < 8; box_idx++) {
-                    int shift = 42 - (box_idx * 6);
-                    uint8_t chunk = (mixed >> shift) & 0x3F;
-                    uint8_t row = ((chunk & 0x20) >> 4) | (chunk & 0x01);
-                    uint8_t col = (chunk >> 1) & 0x0F;
-                    s_result = (s_result << 4) | S_BOXES[box_idx][row][col];
+                for (size_t i = 0; i < data.size(); i++)
+                {
+                    ss << std::setw(2)
+                       << static_cast<int>(data[i]);
                 }
-                
-                uint32_t p_result = permute_bits(s_result, P, 32);
-                uint32_t new_left = right;
-                right = left ^ p_result;
-                left = new_left;
-            }
-            
-            uint64_t combined = ((uint64_t)right << 32) | left;
-            return permute_bits(combined, FP, 64);
-        }
 
-        static std::vector<uint8_t> des_ecb_decrypt(const std::vector<uint8_t>& data, const std::vector<uint64_t>& subkeys) {
-            std::vector<uint8_t> result;
-            size_t len = data.size();
-            size_t padded_len = ((len + 7) / 8) * 8;
-            
-            for (size_t i = 0; i < padded_len; i += 8) {
-                uint64_t block = 0;
-                for (size_t j = 0; j < 8 && (i + j) < len; j++) {
-                    block = (block << 8) | data[i + j];
+                return ss.str();
+            }
+
+            static bool readFile(
+                const std::string &path,
+                std::vector<uint8_t> &data)
+            {
+                std::ifstream file(
+                    path,
+                    std::ios::binary);
+
+                if (!file)
+                    return false;
+
+                file.seekg(
+                    0,
+                    std::ios::end);
+
+                std::streamoff size =
+                    file.tellg();
+
+                if (size <= 0)
+                    return false;
+
+                file.seekg(
+                    0,
+                    std::ios::beg);
+
+                data.resize(
+                    static_cast<size_t>(size));
+
+                file.read(
+                    reinterpret_cast<char *>(data.data()),
+                    size);
+
+                return file.good() ||
+                       file.eof();
+            }
+
+            static bool writeFile(
+                const std::string &path,
+                const std::vector<uint8_t> &data)
+            {
+                std::ofstream file(
+                    path,
+                    std::ios::binary);
+
+                if (!file)
+                    return false;
+
+                if (!data.empty())
+                {
+                    file.write(
+                        reinterpret_cast<const char *>(data.data()),
+                        static_cast<std::streamsize>(data.size()));
                 }
-                // Pad with zeros if less than 8 bytes
-                if (i + 8 > len) {
-                    for (size_t j = len - i; j < 8; j++) {
-                        block = (block << 8) | 0;
-                    }
+
+                return file.good();
+            }
+
+            static bool writeFile(
+                const std::string &path,
+                const uint8_t *data,
+                size_t size)
+            {
+                std::ofstream file(
+                    path,
+                    std::ios::binary);
+
+                if (!file)
+                    return false;
+
+                if (data != nullptr && size > 0)
+                {
+                    file.write(
+                        reinterpret_cast<const char *>(data),
+                        static_cast<std::streamsize>(size));
                 }
-                uint64_t decrypted = des_decrypt_block(block, subkeys);
-                for (int j = 7; j >= 0; j--) {
-                    result.push_back((decrypted >> (j * 8)) & 0xFF);
+
+                return file.good();
+            }
+
+            static void createDirectory(
+                const std::string &path)
+            {
+                try
+                {
+                    std::filesystem::create_directories(path);
+                }
+                catch (...)
+                {
                 }
             }
-            return result;
         }
 
-        FY4LRITDataDecoderModule::FY4LRITDataDecoderModule(std::string input_file, std::string output_file_hint, nlohmann::json parameters)
-            : satdump::pipeline::base::FileStreamToFileStreamModule(input_file, output_file_hint, parameters)
+        FY4LRITDataDecoderModule::FY4LRITDataDecoderModule(
+            std::string input_file,
+            std::string output_file_hint,
+            nlohmann::json parameters)
+            : satdump::pipeline::base::FileStreamToFileStreamModule(
+                  input_file,
+                  output_file_hint,
+                  parameters),
+              input_file_path(input_file),
+              bytes_received(0),
+              total_bytes(0),
+              keys_loaded(false)
         {
             fsfsm_enable_output = false;
-            key_input[0] = '\0';
-            key_entered = false;
-            show_key_input = true;
-            is_dat_file = false;
-            
-            // Detect if this is a DAT file
-            std::string ext = input_file.substr(input_file.find_last_of('.') + 1);
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext == "dat") {
-                is_dat_file = true;
-                logger->info("DAT file detected, will attempt decryption if encrypted");
+
+            try
+            {
+                if (std::filesystem::exists(input_file_path))
+                {
+                    total_bytes =
+                        static_cast<uint64_t>(
+                            std::filesystem::file_size(
+                                input_file_path));
+                }
+            }
+            catch (...)
+            {
+                total_bytes = 0;
             }
         }
 
@@ -163,208 +166,558 @@ namespace fy4
         {
         }
 
-        bool FY4LRITDataDecoderModule::parse_key(const std::string& key_str, std::vector<uint8_t>& key_bytes) {
-            // Try to parse 16 hex characters
-            if (key_str.length() == 16) {
-                try {
-                    key_bytes.clear();
-                    for (size_t i = 0; i < 16; i += 2) {
-                        std::string byte_str = key_str.substr(i, 2);
-                        uint8_t byte = std::stoi(byte_str, nullptr, 16);
-                        key_bytes.push_back(byte);
+        bool FY4LRITDataDecoderModule::loadEncryptionKeys()
+        {
+            std::vector<std::string> paths;
+
+            try
+            {
+                std::string p =
+                    resources::getResourcePath(
+                        "fy4/EncryptionKeyMessage.bin");
+
+                if (!p.empty())
+                    paths.push_back(p);
+            }
+            catch (...)
+            {
+            }
+
+            paths.push_back(
+                "files/resources/fy4/EncryptionKeyMessage.bin");
+
+            paths.push_back(
+                "./files/resources/fy4/EncryptionKeyMessage.bin");
+
+            paths.push_back(
+                "../files/resources/fy4/EncryptionKeyMessage.bin");
+
+            paths.push_back(
+                "../resources/fy4/EncryptionKeyMessage.bin");
+
+            std::string key_path;
+
+            for (size_t i = 0; i < paths.size(); i++)
+            {
+                try
+                {
+                    if (std::filesystem::exists(paths[i]) &&
+                        std::filesystem::is_regular_file(paths[i]))
+                    {
+                        key_path = paths[i];
+                        break;
                     }
-                    return key_bytes.size() == 8;
-                } catch (...) {
-                    return false;
+                }
+                catch (...)
+                {
                 }
             }
-            return false;
+
+            if (key_path.empty())
+            {
+                logger->warning(
+                    "FY-4 EncryptionKeyMessage.bin was not found. "
+                    "Encrypted LRIT files will be preserved but not decrypted.");
+
+                keys_loaded = false;
+                return false;
+            }
+
+            std::vector<uint8_t> data;
+
+            if (!readFile(key_path, data))
+            {
+                logger->warning(
+                    "Unable to read FY-4 encryption key file: " +
+                    key_path);
+
+                keys_loaded = false;
+                return false;
+            }
+
+            if (data.size() < 2)
+            {
+                logger->warning(
+                    "FY-4 encryption key file is too small: " +
+                    key_path);
+
+                keys_loaded = false;
+                return false;
+            }
+
+            /*
+             * EncryptionKeyMessage.bin format:
+             *
+             * uint16 BE key_count
+             *
+             * repeated:
+             *   uint16 BE key_index
+             *   uint64 BE DES key
+             */
+
+            uint16_t key_count =
+                static_cast<uint16_t>(
+                    (static_cast<uint16_t>(data[0]) << 8) |
+                    static_cast<uint16_t>(data[1]));
+
+            size_t offset = 2;
+
+            size_t required =
+                2 + static_cast<size_t>(key_count) * 10;
+
+            if (data.size() < required)
+            {
+                logger->warning(
+                    "FY-4 encryption key file is truncated. "
+                    "Expected at least " +
+                    std::to_string(required) +
+                    " bytes, got " +
+                    std::to_string(data.size()));
+
+                keys_loaded = false;
+                return false;
+            }
+
+            std::map<uint16_t, std::vector<uint8_t>> new_keys;
+
+            for (uint16_t i = 0; i < key_count; i++)
+            {
+                uint16_t index =
+                    static_cast<uint16_t>(
+                        (static_cast<uint16_t>(data[offset]) << 8) |
+                        static_cast<uint16_t>(data[offset + 1]));
+
+                offset += 2;
+
+                std::vector<uint8_t> key(8);
+
+                for (int j = 0; j < 8; j++)
+                    key[j] = data[offset + j];
+
+                offset += 8;
+
+                new_keys[index] = key;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(
+                    decryption_keys_mtx);
+
+                decryption_keys.swap(
+                    new_keys);
+            }
+
+            keys_loaded = !decryption_keys.empty();
+
+            if (keys_loaded)
+            {
+                logger->info(
+                    "Loaded " +
+                    std::to_string(decryption_keys.size()) +
+                    " FY-4 decryption keys from " +
+                    key_path);
+            }
+            else
+            {
+                logger->warning(
+                    "FY-4 encryption key file contains no usable keys.");
+            }
+
+            return keys_loaded;
         }
 
-        std::vector<uint8_t> FY4LRITDataDecoderModule::decrypt_dat_file(const std::vector<uint8_t>& data, const std::vector<uint8_t>& key) {
-            if (data.size() < 16 || data[0] != 0) {
-                logger->error("Invalid DAT file format");
-                return {};
+        bool FY4LRITDataDecoderModule::findEncryptionKey(
+            uint16_t key_index,
+            std::vector<uint8_t> &key)
+        {
+            std::lock_guard<std::mutex> lock(
+                decryption_keys_mtx);
+
+            auto it =
+                decryption_keys.find(key_index);
+
+            if (it == decryption_keys.end())
+                return false;
+
+            if (it->second.size() != 8)
+                return false;
+
+            key = it->second;
+
+            return true;
+        }
+
+        bool FY4LRITDataDecoderModule::decryptLRITFile(
+            satdump::xrit::XRITFile &file,
+            uint16_t key_index)
+        {
+            std::vector<uint8_t> key;
+
+            if (!findEncryptionKey(
+                    key_index,
+                    key))
+            {
+                logger->warning(
+                    "No FY-4 DES key found for key index " +
+                    std::to_string(key_index) +
+                    ". Keeping encrypted file.");
+
+                return false;
             }
-            
-            // Parse header
-            uint16_t header_len = (data[1] << 8) | data[2];
-            uint32_t total_header = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7];
-            uint64_t data_bits = 0;
-            for (int i = 0; i < 8; i++) {
-                data_bits = (data_bits << 8) | data[8 + i];
+
+            if (file.lrit_data.empty())
+            {
+                logger->warning(
+                    "Encrypted FY-4 LRIT file contains no data: " +
+                    file.filename);
+
+                return false;
             }
-            
-            logger->debug("Header length: " + std::to_string(header_len));
-            logger->debug("Total header: " + std::to_string(total_header));
-            logger->debug("Data bits: " + std::to_string(data_bits));
-            
-            // Extract encrypted data
-            if (data.size() <= total_header) {
-                logger->error("No encrypted data found");
-                return {};
+
+            FY4DES des;
+
+            des.setKey(
+                key.data());
+
+            try
+            {
+                std::vector<uint8_t> decrypted =
+                    des.decryptECB(
+                        file.lrit_data);
+
+                file.lrit_data.swap(
+                    decrypted);
+
+                logger->info(
+                    "FY-4 LRIT decrypted: " +
+                    file.filename +
+                    " key=" +
+                    std::to_string(key_index) +
+                    " DES=" +
+                    makeHex(key));
+
+                file.custom_flags.insert_or_assign(
+                    IS_ENCRYPTED,
+                    false);
+
+                return true;
             }
-            
-            std::vector<uint8_t> encrypted_data(data.begin() + total_header, data.end());
-            
-            // Build subkeys
-            uint64_t key64 = 0;
-            for (int i = 0; i < 8; i++) {
-                key64 = (key64 << 8) | key[i];
+            catch (const std::exception &e)
+            {
+                logger->error(
+                    "FY-4 DES decryption failed for " +
+                    file.filename +
+                    ": " +
+                    std::string(e.what()));
+
+                return false;
             }
-            std::vector<uint64_t> subkeys = build_subkeys(key64);
-            
-            // Decrypt
-            std::vector<uint8_t> decrypted = des_ecb_decrypt(encrypted_data, subkeys);
-            
-            // Trim to exact bit length
-            size_t byte_len = (data_bits + 7) / 8;
-            if (decrypted.size() > byte_len) {
-                decrypted.resize(byte_len);
+        }
+
+        void FY4LRITDataDecoderModule::saveEncryptedFile(
+            satdump::xrit::XRITFile &file)
+        {
+            std::string path =
+                directory +
+                "/LRIT_ENCRYPTED";
+
+            createDirectory(path);
+
+            std::string output =
+                path +
+                "/" +
+                file.filename;
+
+            logger->info(
+                "Writing encrypted FY-4 LRIT file " +
+                output);
+
+            if (!writeFile(
+                    output,
+                    file.lrit_data))
+            {
+                logger->error(
+                    "Unable to write encrypted LRIT file: " +
+                    output);
             }
-            int remainder = data_bits % 8;
-            if (remainder > 0 && !decrypted.empty()) {
-                uint8_t mask = (0xFF << (8 - remainder)) & 0xFF;
-                decrypted[decrypted.size() - 1] &= mask;
+        }
+
+        void FY4LRITDataDecoderModule::saveLRITFile(
+            satdump::xrit::XRITFile &file)
+        {
+            std::string path =
+                directory +
+                "/LRIT";
+
+            createDirectory(path);
+
+            std::string output =
+                path +
+                "/" +
+                file.filename;
+
+            logger->info(
+                "Writing decoded FY-4 LRIT file " +
+                output);
+
+            if (!writeFile(
+                    output,
+                    file.lrit_data))
+            {
+                logger->error(
+                    "Unable to write LRIT file: " +
+                    output);
             }
-            
-            return decrypted;
+        }
+
+        void FY4LRITDataDecoderModule::processLRITFile(
+            satdump::xrit::XRITFile &file)
+        {
+            satdump::xrit::PrimaryHeader primary_header =
+                file.getHeader<satdump::xrit::PrimaryHeader>();
+
+            bool encrypted = false;
+            uint16_t key_index = 0;
+
+            if (file.custom_flags.count(IS_ENCRYPTED))
+            {
+                encrypted =
+                    file.custom_flags[IS_ENCRYPTED];
+            }
+
+            if (file.custom_flags.count(KEY_INDEX))
+            {
+                key_index =
+                    static_cast<uint16_t>(
+                        file.custom_flags[KEY_INDEX]);
+            }
+
+            /*
+             * 永远先保存收到的原始加密文件。
+             */
+            if (encrypted)
+            {
+                saveEncryptedFile(file);
+
+                /*
+                 * 没有密钥时严格跳过解密。
+                 */
+                if (!keys_loaded)
+                {
+                    return;
+                }
+
+                /*
+                 * 找不到对应 key 时也不继续。
+                 */
+                if (!decryptLRITFile(
+                        file,
+                        key_index))
+                {
+                    return;
+                }
+
+                /*
+                 * 解密后的 LRIT 数据保存。
+                 */
+                saveLRITFile(file);
+            }
+
+            /*
+             * 非图像数据直接保存。
+             */
+            if (primary_header.file_type_code != 0 ||
+                !file.hasHeader<
+                    satdump::xrit::fy4::ImageInformationRecord>())
+            {
+                if (!encrypted)
+                    saveLRITFile(file);
+
+                return;
+            }
+
+            satdump::xrit::XRITFileInfo finfo =
+                satdump::xrit::identifyXRITFIle(file);
+
+            if (finfo.type !=
+                satdump::xrit::XRIT_UNKNOWN)
+            {
+                std::string processor_name =
+                    finfo.satellite_short_name;
+
+                {
+                    std::lock_guard<std::mutex> lock(
+                        all_processors_mtx);
+
+                    if (all_processors.count(
+                            processor_name) == 0)
+                    {
+                        auto p =
+                            std::make_shared<
+                                satdump::xrit::XRITChannelProcessor>();
+
+                        size_t slash =
+                            d_output_file_hint.rfind('/');
+
+                        if (slash != std::string::npos)
+                        {
+                            p->directory =
+                                d_output_file_hint.substr(
+                                    0,
+                                    slash) +
+                                "/IMAGES";
+                        }
+                        else
+                        {
+                            p->directory =
+                                directory +
+                                "/IMAGES";
+                        }
+
+                        all_processors.emplace(
+                            processor_name,
+                            p);
+                    }
+                }
+
+                std::shared_ptr<
+                    satdump::xrit::XRITChannelProcessor> processor;
+
+                {
+                    std::lock_guard<std::mutex> lock(
+                        all_processors_mtx);
+
+                    processor =
+                        all_processors[processor_name];
+                }
+
+                processor->push(
+                    finfo,
+                    file);
+            }
+            else
+            {
+                /*
+                 * 识别不了的 XRIT 数据仍然保存。
+                 */
+                if (!encrypted)
+                    saveLRITFile(file);
+            }
         }
 
         void FY4LRITDataDecoderModule::process()
         {
-            std::string directory = d_output_file_hint.substr(0, d_output_file_hint.rfind('/'));
+            directory =
+                d_output_file_hint;
 
-            if (!std::filesystem::exists(directory))
-                std::filesystem::create_directory(directory);
+            size_t slash =
+                directory.rfind('/');
 
-            this->directory = directory;
+            if (slash != std::string::npos)
+                directory =
+                    directory.substr(0, slash);
 
-            // If this is a DAT file, handle decryption
-            if (is_dat_file) {
-                logger->info("Processing DAT file...");
-                
-                // Wait for user to enter key
-                while (!key_entered && should_run()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (directory.empty())
+                directory = ".";
+
+            createDirectory(directory);
+
+            createDirectory(
+                directory + "/LRIT");
+
+            createDirectory(
+                directory + "/LRIT_ENCRYPTED");
+
+            createDirectory(
+                directory + "/IMAGES");
+
+            bytes_received = 0;
+
+            total_bytes = 0;
+
+            try
+            {
+                if (std::filesystem::exists(
+                        input_file_path))
+                {
+                    total_bytes =
+                        static_cast<uint64_t>(
+                            std::filesystem::file_size(
+                                input_file_path));
                 }
-                
-                if (!should_run()) return;
-                
-                // Read DAT file
-                std::ifstream file(d_input_file, std::ios::binary);
-                if (!file.is_open()) {
-                    logger->error("Failed to open DAT file: " + d_input_file);
-                    return;
-                }
-                
-                file.seekg(0, std::ios::end);
-                size_t file_size = file.tellg();
-                file.seekg(0, std::ios::beg);
-                
-                std::vector<uint8_t> dat_data(file_size);
-                file.read((char*)dat_data.data(), file_size);
-                file.close();
-                
-                // Attempt decryption
-                std::vector<uint8_t> decrypted_data = decrypt_dat_file(dat_data, key_bytes);
-                if (decrypted_data.empty()) {
-                    logger->error("Decryption failed");
-                    return;
-                }
-                
-                logger->info("Decrypted " + std::to_string(decrypted_data.size()) + " bytes");
-                
-                // Look for JPEG or PNG signatures
-                bool found_image = false;
-                std::vector<uint8_t> image_data;
-                
-                // Look for JPEG
-                for (size_t i = 0; i < decrypted_data.size() - 2; i++) {
-                    if (decrypted_data[i] == 0xFF && decrypted_data[i+1] == 0xD8 && decrypted_data[i+2] == 0xFF) {
-                        logger->info("Found JPEG signature at offset " + std::to_string(i));
-                        image_data.assign(decrypted_data.begin() + i, decrypted_data.end());
-                        found_image = true;
-                        break;
-                    }
-                }
-                
-                // Look for PNG
-                if (!found_image) {
-                    for (size_t i = 0; i < decrypted_data.size() - 8; i++) {
-                        if (decrypted_data[i] == 0x89 && decrypted_data[i+1] == 0x50 && 
-                            decrypted_data[i+2] == 0x4E && decrypted_data[i+3] == 0x47 &&
-                            decrypted_data[i+4] == 0x0D && decrypted_data[i+5] == 0x0A &&
-                            decrypted_data[i+6] == 0x1A && decrypted_data[i+7] == 0x0A) {
-                            logger->info("Found PNG signature at offset " + std::to_string(i));
-                            image_data.assign(decrypted_data.begin() + i, decrypted_data.end());
-                            found_image = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if (found_image) {
-                    // Save to LRIT directory
-                    std::string output_dir = directory + "/IMAGES";
-                    if (!std::filesystem::exists(output_dir))
-                        std::filesystem::create_directories(output_dir);
-                    
-                    std::string output_file = output_dir + "/decrypted_image";
-                    if (image_data[0] == 0xFF && image_data[1] == 0xD8) {
-                        output_file += ".jpg";
-                    } else if (image_data[0] == 0x89 && image_data[1] == 0x50) {
-                        output_file += ".png";
-                    } else {
-                        output_file += ".bin";
-                    }
-                    
-                    std::ofstream out_file(output_file, std::ios::binary);
-                    out_file.write((char*)image_data.data(), image_data.size());
-                    out_file.close();
-                    
-                    logger->info("Saved decrypted image to: " + output_file);
-                } else {
-                    // Save full decrypted data for debugging
-                    std::string output_dir = directory + "/IMAGES/Unknown";
-                    if (!std::filesystem::exists(output_dir))
-                        std::filesystem::create_directories(output_dir);
-                    
-                    std::string output_file = output_dir + "/decrypted_data.bin";
-                    std::ofstream out_file(output_file, std::ios::binary);
-                    out_file.write((char*)decrypted_data.data(), decrypted_data.size());
-                    out_file.close();
-                    
-                    logger->info("No image signature found, saved raw decrypted data to: " + output_file);
-                }
-                
-                return; // DAT file processing complete
+            }
+            catch (...)
+            {
             }
 
-            // Original LRIT processing logic
-            logger->info("Demultiplexing and deframing...");
+            /*
+             * 尝试加载 FY-4 密钥。
+             *
+             * 找不到不会让模块失败。
+             */
+            loadEncryptionKeys();
 
-            satdump::xrit::XRITDemux lrit_demux(1012, false);
+            logger->info(
+                "Demultiplexing and deframing FY-4 LRIT...");
 
-            lrit_demux.onParseHeader = [](satdump::xrit::XRITFile &file) -> void
+            satdump::xrit::XRITDemux lrit_demux(
+                1012,
+                false);
+
+            lrit_demux.onParseHeader =
+                [this](satdump::xrit::XRITFile &file) -> void
             {
-                if (file.hasHeader<satdump::xrit::fy4::KeyHeader>())
+                if (file.hasHeader<
+                        satdump::xrit::fy4::ImageInformationRecord>())
                 {
-                    satdump::xrit::fy4::KeyHeader key_header = file.getHeader<satdump::xrit::fy4::KeyHeader>();
+                    satdump::xrit::fy4::ImageInformationRecord
+                        image_structure_record =
+                            file.getHeader<
+                                satdump::xrit::fy4::ImageInformationRecord>();
+
+                    logger->debug(
+                        "FY-4 image data: " +
+                        std::to_string(
+                            image_structure_record.columns_count) +
+                        "x" +
+                        std::to_string(
+                            image_structure_record.lines_count));
+                }
+
+                if (file.hasHeader<
+                        satdump::xrit::fy4::KeyHeader>())
+                {
+                    satdump::xrit::fy4::KeyHeader key_header =
+                        file.getHeader<
+                            satdump::xrit::fy4::KeyHeader>();
+
                     if (key_header.key != 0)
                     {
-                        logger->debug("This is encrypted!");
-                        file.custom_flags.insert_or_assign(IS_ENCRYPTED, true);
-                        file.custom_flags.insert_or_assign(KEY_INDEX, key_header.key);
+                        file.custom_flags.insert_or_assign(
+                            IS_ENCRYPTED,
+                            true);
+
+                        file.custom_flags.insert_or_assign(
+                            KEY_INDEX,
+                            static_cast<int>(
+                                key_header.key));
+
+                        logger->debug(
+                            "FY-4 encrypted LRIT, key index=" +
+                            std::to_string(key_header.key));
                     }
                     else
                     {
-                        file.custom_flags.insert_or_assign(IS_ENCRYPTED, false);
+                        file.custom_flags.insert_or_assign(
+                            IS_ENCRYPTED,
+                            false);
                     }
                 }
                 else
                 {
-                    file.custom_flags.insert_or_assign(IS_ENCRYPTED, false);
+                    file.custom_flags.insert_or_assign(
+                        IS_ENCRYPTED,
+                        false);
                 }
             };
 
@@ -372,8 +725,23 @@ namespace fy4
 
             while (should_run())
             {
-                read_data((uint8_t *)&cadu, 1024);
-                std::vector<satdump::xrit::XRITFile> files = lrit_demux.work(cadu);
+                read_data(
+                    cadu,
+                    sizeof(cadu));
+
+                bytes_received +=
+                    sizeof(cadu);
+
+                if (total_bytes > 0 &&
+                    bytes_received > total_bytes)
+                {
+                    bytes_received =
+                        total_bytes;
+                }
+
+                std::vector<
+                    satdump::xrit::XRITFile> files =
+                    lrit_demux.work(cadu);
 
                 for (auto &file : files)
                     processLRITFile(file);
@@ -385,49 +753,85 @@ namespace fy4
                 p.second->flush();
         }
 
-        void FY4LRITDataDecoderModule::drawUI(bool window)
+        void FY4LRITDataDecoderModule::drawUI(
+            bool window)
         {
-            ImGui::Begin("FY-4x LRIT Data Decoder", NULL, window ? 0 : NOWINDOW_FLAGS);
+            ImGui::Begin(
+                "FY-4x LRIT Data Decoder",
+                NULL,
+                window ? 0 : NOWINDOW_FLAGS);
 
-            // If this is a DAT file, show key input interface
-            if (is_dat_file) {
-                if (!key_entered) {
-                    ImGui::Text("Enter decryption key (16 hex digits):");
-                    ImGui::InputText("##key_input", key_input, sizeof(key_input));
-                    
-                    if (ImGui::Button("Decrypt")) {
-                        std::string key_str(key_input);
-                        if (parse_key(key_str, key_bytes)) {
-                            key_entered = true;
-                            logger->info("Key accepted");
-                        } else {
-                            logger->error("Invalid key format. Please enter 16 hexadecimal characters.");
-                        }
-                    }
-                    
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel")) {
-                        // Set stop flag
-                        should_stop = true;
-                    }
-                } else {
-                    ImGui::Text("Decrypting...");
-                }
-            } else {
-                all_processors_mtx.lock();
-                satdump::xrit::renderAllTabsFromProcessors(all_processors);
-                all_processors_mtx.unlock();
-                drawProgressBar();
+            uint64_t current =
+                bytes_received.load();
+
+            uint64_t total =
+                total_bytes.load();
+
+            if (total > 0)
+            {
+                double progress =
+                    static_cast<double>(current) /
+                    static_cast<double>(total);
+
+                if (progress > 1.0)
+                    progress = 1.0;
+
+                if (progress < 0.0)
+                    progress = 0.0;
+
+                ImGui::ProgressBar(
+                    static_cast<float>(progress),
+                    ImVec2(-1, 0),
+                    NULL);
+
+                ImGui::Text(
+                    "%.2f%%",
+                    progress * 100.0);
+
+                ImGui::Text(
+                    "Received: %llu / %llu bytes",
+                    static_cast<unsigned long long>(current),
+                    static_cast<unsigned long long>(total));
             }
+            else
+            {
+                ImGui::Text(
+                    "Received: %llu bytes",
+                    static_cast<unsigned long long>(current));
+            }
+
+            ImGui::Separator();
+
+            {
+                std::lock_guard<std::mutex> lock(
+                    all_processors_mtx);
+
+                satdump::xrit::renderAllTabsFromProcessors(
+                    all_processors);
+            }
+
+            drawProgressBar();
 
             ImGui::End();
         }
 
-        std::string FY4LRITDataDecoderModule::getID() { return "fy4_lrit_data_decoder"; }
-
-        std::shared_ptr<satdump::pipeline::ProcessingModule> FY4LRITDataDecoderModule::getInstance(std::string input_file, std::string output_file_hint, nlohmann::json parameters)
+        std::string FY4LRITDataDecoderModule::getID()
         {
-            return std::make_shared<FY4LRITDataDecoderModule>(input_file, output_file_hint, parameters);
+            return "fy4_lrit_data_decoder";
         }
-    } // namespace lrit
-} // namespace fy4
+
+        std::shared_ptr<
+            satdump::pipeline::ProcessingModule>
+        FY4LRITDataDecoderModule::getInstance(
+            std::string input_file,
+            std::string output_file_hint,
+            nlohmann::json parameters)
+        {
+            return std::make_shared<
+                FY4LRITDataDecoderModule>(
+                    input_file,
+                    output_file_hint,
+                    parameters);
+        }
+    }
+}
