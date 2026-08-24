@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -24,9 +23,9 @@ jobs:
         run: |
           set -e
 
-          sudo apt update
+          sudo apt-get update
 
-          sudo apt install -y \
+          sudo apt-get install -y \
             cmake \
             ninja-build \
             openjdk-17-jdk \
@@ -41,24 +40,14 @@ jobs:
         run: |
           set -e
 
-          sudo rm -rf \
-            /usr/bin/gradle \
-            /usr/local/bin/gradle \
-            /opt/gradle \
-            /opt/gradle-7.5 \
-            "$HOME/.gradle"
+          sudo rm -rf /opt/gradle
+          sudo rm -rf "$HOME/.gradle"
 
           wget -q \
             https://services.gradle.org/distributions/gradle-7.5-bin.zip \
             -O gradle.zip
 
-          sudo mkdir -p /opt
-
-          sudo unzip \
-            -q \
-            -o \
-            gradle.zip \
-            -d /opt
+          sudo unzip -q -o gradle.zip -d /opt
 
           echo "/opt/gradle-7.5/bin" >> "$GITHUB_PATH"
 
@@ -73,39 +62,31 @@ jobs:
 
           export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
 
-          wget \
-            --quiet \
-            --output-document=android-sdk.zip \
-            https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
-
           rm -rf "$ANDROID_HOME"
-
           mkdir -p "$ANDROID_HOME"
 
-          unzip \
-            -qq \
-            android-sdk.zip \
-            -d "$ANDROID_HOME"
+          wget -q \
+            https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip \
+            -O android-sdk.zip
 
-          echo "===== Android SDK ====="
+          unzip -q android-sdk.zip -d "$ANDROID_HOME"
+
+          echo "===== SDKMANAGER ====="
 
           "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
             --sdk_root="$ANDROID_HOME" \
             --version
 
-          echo "===== Accept licenses ====="
+          echo "===== ACCEPT LICENSES ====="
 
           set +o pipefail
-
           yes | "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
             --sdk_root="$ANDROID_HOME" \
             --licenses
-
           true
-
           set -o pipefail
 
-          echo "===== Install SDK ====="
+          echo "===== INSTALL SDK ====="
 
           "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
             --sdk_root="$ANDROID_HOME" \
@@ -113,16 +94,13 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-          test -d \
-            "$ANDROID_HOME/platform-tools"
+          echo "===== VERIFY SDK ====="
 
-          test -d \
-            "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/platform-tools"
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
 
-          test -d \
-            "$ANDROID_HOME/build-tools/35.0.0"
-
-          echo "Android SDK installed successfully"
+          echo "Android SDK OK"
 
       - name: Install Android NDK
         shell: bash
@@ -136,10 +114,9 @@ jobs:
             --install "ndk;25.2.9519653" \
             --channel=3
 
-          test -d \
-            "$ANDROID_HOME/ndk/25.2.9519653"
+          test -d "$ANDROID_HOME/ndk/25.2.9519653"
 
-          echo "NDK 25.2.9519653 installed successfully"
+          echo "NDK OK"
 
       - name: Initialize submodules
         shell: bash
@@ -148,7 +125,7 @@ jobs:
 
           git submodule update --init --recursive
 
-      - name: Patch dependency build script
+      - name: Prepare dependency build
         shell: bash
         run: |
           set -e
@@ -156,7 +133,6 @@ jobs:
           cd "$GITHUB_WORKSPACE/android/deps"
 
           if [ -f build.sh ]; then
-
             sed -i \
               's#https://github.com/R1NC/sqlite#https://github.com/sqlite/sqlite#g' \
               build.sh || true
@@ -168,10 +144,11 @@ jobs:
             sed -i \
               's/for abi in armeabi-v7a arm64-v8a x86 x86_64/for abi in arm64-v8a/g' \
               build.sh || true
-
           fi
 
-          echo "===== android/deps/build.sh ====="
+          chmod +x build.sh
+
+          echo "===== build.sh ====="
 
           sed -n '1,350p' build.sh
 
@@ -185,9 +162,7 @@ jobs:
 
           cd "$GITHUB_WORKSPACE/android/deps"
 
-          chmod +x build.sh
-
-          sh build.sh
+          ./build.sh
 
       - name: Build SQLite
         shell: bash
@@ -199,15 +174,12 @@ jobs:
 
           export OUTPUT_DIR="$GITHUB_WORKSPACE/android/deps/output/arm64-v8a"
 
-          export TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
-
-          export CC="$TOOLCHAIN/bin/aarch64-linux-android24-clang"
-          export CXX="$TOOLCHAIN/bin/aarch64-linux-android24-clang++"
-          export AR="$TOOLCHAIN/bin/llvm-ar"
-          export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
-
           mkdir -p "$OUTPUT_DIR/lib"
           mkdir -p "$OUTPUT_DIR/include"
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "NDK=$NDK"
+          echo "OUTPUT_DIR=$OUTPUT_DIR"
 
           if [ -f "$OUTPUT_DIR/lib/libsqlite3.a" ]; then
             echo "SQLite already exists"
@@ -218,10 +190,10 @@ jobs:
           cd "$GITHUB_WORKSPACE/android/deps"
 
           rm -rf sqlite-build
-
           mkdir -p sqlite-build
-
           cd sqlite-build
+
+          echo "===== Download SQLite ====="
 
           wget -q \
             https://www.sqlite.org/2026/sqlite-autoconf-3530400.tar.gz \
@@ -229,31 +201,30 @@ jobs:
 
           tar -xzf sqlite.tar.gz
 
-          SQLITE_DIR=""
-
-          for d in sqlite-autoconf-*; do
-            if [ -d "$d" ]; then
-              SQLITE_DIR="$d"
-              break
-            fi
-          done
+          SQLITE_DIR="$(find . -maxdepth 1 -type d -name 'sqlite-autoconf-*' | head -n 1)"
 
           if [ -z "$SQLITE_DIR" ]; then
-            echo "ERROR: SQLite source directory not found"
+            echo "ERROR: SQLite source not found"
             exit 1
           fi
 
           cd "$SQLITE_DIR"
+
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+
+          export CC="$TOOLCHAIN/bin/aarch64-linux-android24-clang"
+          export CXX="$TOOLCHAIN/bin/aarch64-linux-android24-clang++"
+          export AR="$TOOLCHAIN/bin/llvm-ar"
+          export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
+
+          echo "CC=$CC"
+          echo "CXX=$CXX"
 
           ./configure \
             --host=aarch64-linux-android \
             --prefix="$OUTPUT_DIR" \
             --disable-shared \
             --enable-static \
-            CC="$CC" \
-            CXX="$CXX" \
-            AR="$AR" \
-            RANLIB="$RANLIB" \
             CFLAGS="-O2 -fPIC"
 
           make -j"$(nproc)"
@@ -261,14 +232,13 @@ jobs:
           make install
 
           if [ ! -f "$OUTPUT_DIR/lib/libsqlite3.a" ]; then
-            echo "ERROR: SQLite build failed"
+            echo "ERROR: SQLite library was not produced"
             exit 1
           fi
 
-          echo "SQLite build successful"
+          echo "SQLite OK"
 
-          ls -lh \
-            "$OUTPUT_DIR/lib/libsqlite3.a"
+          ls -lh "$OUTPUT_DIR/lib/libsqlite3.a"
 
       - name: Verify dependencies
         shell: bash
@@ -277,165 +247,56 @@ jobs:
 
           OUTPUT_DIR="$GITHUB_WORKSPACE/android/deps/output/arm64-v8a"
 
-          echo "===== Dependency verification ====="
+          echo "===== VERIFY DEPENDENCIES ====="
 
-          for lib in \
-            libsqlite3.a \
-            libvolk.a \
-            libnng.a
-          do
-
+          for lib in libsqlite3.a libvolk.a libnng.a; do
             if [ -f "$OUTPUT_DIR/lib/$lib" ]; then
-
               echo "FOUND: $lib"
-
-              ls -lh \
-                "$OUTPUT_DIR/lib/$lib"
-
+              ls -lh "$OUTPUT_DIR/lib/$lib"
             else
-
-              echo "WARNING: $lib not found"
-
+              echo "MISSING: $lib"
             fi
-
           done
 
-      - name: Fix FY4 Android source
-        shell: bash
-        run: |
-          set -e
-
-          FILE="$GITHUB_WORKSPACE/plugins/fengyun4_support/fy4/module_fy4_lrit_data_decoder.cpp"
-
-          if [ ! -f "$FILE" ]; then
-            echo "FY4 source not found:"
-            echo "$FILE"
-            exit 1
-          fi
-
-          echo "===== Original FY4 source ====="
-
-          sed -n '1,40p' "$FILE"
-
-          echo "===== show_key_input ====="
-
-          grep -n \
-            "show_key_input" \
-            "$FILE" \
-            || true
-
-          echo "===== sleep_for ====="
-
-          grep -n \
-            "sleep_for" \
-            "$FILE" \
-            || true
-
-          if ! grep -q '#include <thread>' "$FILE"; then
-            sed -i '1i#include <thread>' "$FILE"
-          fi
-
-          if ! grep -q '#include <chrono>' "$FILE"; then
-            sed -i '1i#include <chrono>' "$FILE"
-          fi
-
-          if ! grep -Eq \
-            'bool[[:space:]]+show_key_input|std::atomic.*show_key_input' \
-            "$FILE"; then
-
-            python3 - "$FILE" <<'PY'
-import sys
-
-path = sys.argv[1]
-
-with open(path, "r", encoding="utf-8") as f:
-    data = f.read()
-
-if "static bool show_key_input" not in data:
-
-    marker = "#include <thread>"
-
-    if marker in data:
-        data = data.replace(
-            marker,
-            marker + "\n\nstatic bool show_key_input = false;",
-            1
-        )
-    else:
-        data = (
-            "#include <thread>\n"
-            "#include <chrono>\n"
-            "\n"
-            "static bool show_key_input = false;\n\n"
-            + data
-        )
-
-with open(path, "w", encoding="utf-8") as f:
-    f.write(data)
-PY
-
-          fi
-
-          echo "===== Patched FY4 source ====="
-
-          grep -n \
-            "show_key_input\|sleep_for\|#include <thread>\|#include <chrono>" \
-            "$FILE" \
-            || true
-
-      - name: Clean Android CMake cache
+      - name: Clean Android CMake
         shell: bash
         run: |
           set -e
 
           cd "$GITHUB_WORKSPACE/android"
 
-          rm -rf \
-            app/.cxx \
-            app/build \
-            .cxx
+          rm -rf app/.cxx
+          rm -rf app/build
+          rm -rf .cxx
 
-          echo "CMake cache cleaned"
+          echo "Android CMake cache cleaned"
 
       - name: Build APK
         shell: bash
         run: |
           set -o pipefail
 
-          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-
+          export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
           export PATH="/opt/gradle-7.5/bin:$JAVA_HOME/bin:$PATH"
 
           export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
-
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
-
           export NDK="$ANDROID_HOME/ndk/25.2.9519653"
 
           cd "$GITHUB_WORKSPACE/android"
 
-          echo "========================================"
-          echo "JAVA"
-          echo "========================================"
-
+          echo "===== JAVA ====="
           java -version
 
-          echo "========================================"
-          echo "GRADLE"
-          echo "========================================"
-
+          echo "===== GRADLE ====="
           gradle --version
 
-          echo "========================================"
-          echo "ANDROID"
-          echo "========================================"
-
+          echo "===== ANDROID ====="
           echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           echo "NDK=$NDK"
 
-          echo "========================================"
-          echo "BUILD APK"
-          echo "========================================"
+          echo "===== BUILD ====="
 
           gradle \
             assembleDebug \
@@ -444,64 +305,61 @@ PY
             --no-daemon \
             2>&1 | tee "$GITHUB_WORKSPACE/android/build.log"
 
-      - name: Extract real build errors
+      - name: Extract native build errors
         if: failure()
         shell: bash
         run: |
-          echo "========================================"
-          echo "REAL BUILD ERRORS"
-          echo "========================================"
-
           LOG="$GITHUB_WORKSPACE/android/build.log"
 
-          if [ -f "$LOG" ]; then
+          echo "========================================"
+          echo "NATIVE BUILD ERROR ANALYSIS"
+          echo "========================================"
 
-            echo
-            echo "===== C++ errors ====="
-
-            grep -nEi \
-              "error:" \
-              "$LOG" \
-              | tail -150 \
-              || true
-
-            echo
-            echo "===== FAILED ====="
-
-            grep -nEi \
-              "FAILED:" \
-              "$LOG" \
-              | tail -150 \
-              || true
-
-            echo
-            echo "===== undefined symbols ====="
-
-            grep -nEi \
-              "undefined reference|undefined symbol" \
-              "$LOG" \
-              | tail -150 \
-              || true
-
-            echo
-            echo "===== linker ====="
-
-            grep -nEi \
-              "ld\.lld|clang.*error|fatal error" \
-              "$LOG" \
-              | tail -150 \
-              || true
-
-            echo
-            echo "===== Last 500 lines ====="
-
-            tail -500 "$LOG"
-
-          else
-
-            echo "build.log does not exist"
-
+          if [ ! -f "$LOG" ]; then
+            echo "build.log not found"
+            exit 0
           fi
+
+          echo
+          echo "===== ERROR ====="
+
+          grep -nEi \
+            'error:|fatal error:' \
+            "$LOG" \
+            | tail -200 \
+            || true
+
+          echo
+          echo "===== FAILED ====="
+
+          grep -nEi \
+            'FAILED:' \
+            "$LOG" \
+            | tail -200 \
+            || true
+
+          echo
+          echo "===== LINKER ====="
+
+          grep -nEi \
+            'undefined reference|undefined symbol|ld.lld' \
+            "$LOG" \
+            | tail -200 \
+            || true
+
+          echo
+          echo "===== NINJA ====="
+
+          grep -nEi \
+            'ninja:|ninja.*error|subcommand failed' \
+            "$LOG" \
+            | tail -200 \
+            || true
+
+          echo
+          echo "===== LAST 500 LINES ====="
+
+          tail -500 "$LOG"
 
       - name: Upload build log
         if: always()
@@ -519,7 +377,6 @@ PY
           APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-
             echo "ERROR: APK not found"
 
             find \
@@ -529,12 +386,9 @@ PY
               || true
 
             exit 1
-
           fi
 
-          echo "========================================"
-          echo "APK BUILD SUCCESS"
-          echo "========================================"
+          echo "===== APK ====="
 
           ls -lh "$APK"
 
