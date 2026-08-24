@@ -1,3 +1,202 @@
+name: Build All
+
+on:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+permissions:
+  contents: write
+
+jobs:
+  build_android:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt update
+
+          sudo apt install -y \
+            cmake \
+            ninja-build \
+            openjdk-17-jdk \
+            wget \
+            unzip \
+            build-essential \
+            git \
+            python3-mako
+
+      - name: Install Gradle 7.5
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt remove --purge -y gradle || true
+          sudo apt autoremove -y || true
+
+          sudo rm -rf \
+            /usr/bin/gradle \
+            /usr/local/bin/gradle \
+            /opt/gradle \
+            /opt/gradle-7.5 \
+            "$HOME/.gradle"
+
+          wget \
+            -q \
+            https://services.gradle.org/distributions/gradle-7.5-bin.zip \
+            -O gradle-7.5-bin.zip
+
+          sudo mkdir -p /opt
+
+          sudo unzip \
+            -q \
+            -o \
+            gradle-7.5-bin.zip \
+            -d /opt
+
+          echo "/opt/gradle-7.5/bin" >> "$GITHUB_PATH"
+
+          export PATH="/opt/gradle-7.5/bin:$PATH"
+
+          gradle --version
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
+
+          wget \
+            --quiet \
+            --output-document=android-sdk.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-8512546_latest.zip
+
+          rm -rf "$ANDROID_HOME"
+
+          mkdir -p "$ANDROID_HOME"
+
+          unzip \
+            -qq \
+            android-sdk.zip \
+            -d "$ANDROID_HOME"
+
+          echo "===== Android SDK tools ====="
+
+          "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" \
+            --version
+
+          echo "===== Update SDK manager ====="
+
+          "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" \
+            --update || true
+
+          echo "===== Accept Android licenses ====="
+
+          set +o pipefail
+
+          yes | "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" \
+            --licenses
+
+          set -o pipefail
+
+          echo "===== Install Android SDK ====="
+
+          "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" \
+            "platform-tools"
+
+          echo "Android SDK installed successfully"
+
+          echo "===== SDK directory ====="
+
+          ls -la "$ANDROID_HOME"
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -e
+
+          export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
+
+          "$ANDROID_HOME/cmdline-tools/bin/sdkmanager" \
+            --sdk_root="$ANDROID_HOME" \
+            --install "ndk;25.2.9519653" \
+            --channel=3
+
+          if [ ! -d "$ANDROID_HOME/ndk/25.2.9519653" ]; then
+            echo "ERROR: NDK installation failed"
+            exit 1
+          fi
+
+          echo "===== NDK installed ====="
+
+          ls -la \
+            "$ANDROID_HOME/ndk/25.2.9519653"
+
+      - name: Fix build.sh and build dependencies
+        shell: bash
+        run: |
+          set -e
+
+          export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
+          export NDK="$ANDROID_HOME/ndk/25.2.9519653"
+
+          cd "$GITHUB_WORKSPACE/android/deps"
+
+          echo "===== Update submodules ====="
+
+          git submodule update --init --recursive
+
+          echo "===== Original build.sh ====="
+
+          sed -n '1,300p' build.sh || true
+
+          echo "================================"
+
+          if grep -q "R1NC/sqlite" build.sh; then
+            sed -i \
+              's#https://github.com/R1NC/sqlite#https://github.com/sqlite/sqlite#g' \
+              build.sh
+          fi
+
+          sed -i \
+            's/-DNNG_TOOLS=OFF -DNNG_TESTS=OFF -DNNG_ENABLE_NNGCAT=OFF//g' \
+            build.sh || true
+
+          if grep -q "build_volk armeabi-v7a" build.sh; then
+            sed -i \
+              '/build_volk armeabi-v7a/i\  cd volk && git submodule update --init --recursive && cd ..' \
+              build.sh
+          fi
+
+          sed -i \
+            's/for abi in armeabi-v7a arm64-v8a x86 x86_64/for abi in arm64-v8a/g' \
+            build.sh || true
+
+          chmod +x build.sh
+
+          echo "===== Modified build.sh ====="
+
+          sed -n '1,350p' build.sh
+
+          echo "================================"
+
+          sh build.sh
+
       - name: Build SQLite library
         shell: bash
         run: |
@@ -5,6 +204,7 @@
 
           export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
           export NDK="$ANDROID_HOME/ndk/25.2.9519653"
+
           export OUTPUT_DIR="$GITHUB_WORKSPACE/android/deps/output/arm64-v8a"
 
           export TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
@@ -18,9 +218,9 @@
           mkdir -p "$OUTPUT_DIR/lib"
           mkdir -p "$OUTPUT_DIR/include"
 
-          echo "======================================"
+          echo "========================================"
           echo "SQLite Android build"
-          echo "======================================"
+          echo "========================================"
 
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "NDK=$NDK"
@@ -40,21 +240,32 @@
           cd "$GITHUB_WORKSPACE/android/deps"
 
           rm -rf sqlite-build
+
           mkdir -p sqlite-build
 
           cd sqlite-build
 
           echo "===== Download SQLite ====="
 
-          wget -q \
+          wget \
+            -q \
             https://www.sqlite.org/2026/sqlite-autoconf-3530400.tar.gz \
             -O sqlite.tar.gz
 
           echo "===== Extract SQLite ====="
 
-          tar -xzf sqlite.tar.gz
+          tar \
+            -xzf \
+            sqlite.tar.gz
 
-          SQLITE_DIR="$(find . -maxdepth 1 -type d -name 'sqlite-autoconf-*' | head -n 1)"
+          SQLITE_DIR=""
+
+          for dir in sqlite-autoconf-*; do
+            if [ -d "$dir" ]; then
+              SQLITE_DIR="$dir"
+              break
+            fi
+          done
 
           if [ -z "$SQLITE_DIR" ]; then
             echo "ERROR: SQLite source directory not found"
@@ -73,9 +284,9 @@
             sqlite3.h \
             | head -n 1 || true
 
-          echo "======================================"
+          echo "========================================"
           echo "Configure SQLite for Android"
-          echo "======================================"
+          echo "========================================"
 
           ./configure \
             --host=aarch64-linux-android \
@@ -89,45 +300,53 @@
             CFLAGS="-O2 -fPIC" \
             LDFLAGS=""
 
-          echo "======================================"
+          echo "========================================"
           echo "Build SQLite"
-          echo "======================================"
+          echo "========================================"
 
-          make -j"$(nproc)"
+          make \
+            -j"$(nproc)"
 
-          echo "======================================"
+          echo "========================================"
           echo "Install SQLite"
-          echo "======================================"
+          echo "========================================"
 
           make install
 
           cd "$GITHUB_WORKSPACE"
 
-          echo "======================================"
-          echo "Locate SQLite library"
-          echo "======================================"
+          echo "========================================"
+          echo "Search SQLite library"
+          echo "========================================"
 
-          find "$OUTPUT_DIR" \
+          find \
+            "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
             -type f \
-            -name "*.a" \
-            -print
+            -name "libsqlite3.a" \
+            -print || true
 
           if [ ! -f "$OUTPUT_DIR/lib/libsqlite3.a" ]; then
 
-            SQLITE_LIB="$(
-              find "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
+            SQLITE_LIB=""
+
+            while IFS= read -r file; do
+              SQLITE_LIB="$file"
+              break
+            done < <(
+              find \
+                "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
                 -type f \
                 -name "libsqlite3.a" \
-                -print \
-                | head -n 1
-            )"
+                -print
+            )
 
             if [ -n "$SQLITE_LIB" ]; then
 
-              echo "Found:"
+              echo "Found SQLite library:"
               echo "$SQLITE_LIB"
 
-              cp -v \
+              cp \
+                -v \
                 "$SQLITE_LIB" \
                 "$OUTPUT_DIR/lib/libsqlite3.a"
 
@@ -136,20 +355,26 @@
 
           if [ ! -f "$OUTPUT_DIR/include/sqlite3.h" ]; then
 
-            SQLITE_HEADER="$(
-              find "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
+            SQLITE_HEADER=""
+
+            while IFS= read -r file; do
+              SQLITE_HEADER="$file"
+              break
+            done < <(
+              find \
+                "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
                 -type f \
                 -name "sqlite3.h" \
-                -print \
-                | head -n 1
-            )"
+                -print
+            )
 
             if [ -n "$SQLITE_HEADER" ]; then
 
               echo "Found SQLite header:"
               echo "$SQLITE_HEADER"
 
-              cp -v \
+              cp \
+                -v \
                 "$SQLITE_HEADER" \
                 "$OUTPUT_DIR/include/sqlite3.h"
 
@@ -162,14 +387,16 @@
 
             echo "===== SQLite build files ====="
 
-            find "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
+            find \
+              "$GITHUB_WORKSPACE/android/deps/sqlite-build" \
               -maxdepth 5 \
               -type f \
-              -print | head -300 || true
+              -print || true
 
             echo "===== Output directory ====="
 
-            find "$OUTPUT_DIR" \
+            find \
+              "$OUTPUT_DIR" \
               -maxdepth 5 \
               -type f \
               -print || true
@@ -177,9 +404,9 @@
             exit 1
           fi
 
-          echo "======================================"
+          echo "========================================"
           echo "SQLite built successfully"
-          echo "======================================"
+          echo "========================================"
 
           ls -lh \
             "$OUTPUT_DIR/lib/libsqlite3.a"
@@ -188,3 +415,144 @@
             ls -lh \
               "$OUTPUT_DIR/include/sqlite3.h"
           fi
+
+      - name: Verify dependencies
+        shell: bash
+        run: |
+          set -e
+
+          export OUTPUT_DIR="$GITHUB_WORKSPACE/android/deps/output/arm64-v8a"
+
+          echo "========================================"
+          echo "Dependency verification"
+          echo "========================================"
+
+          for lib in \
+            libsqlite3.a \
+            libvolk.a \
+            libnng.a
+          do
+
+            if [ -f "$OUTPUT_DIR/lib/$lib" ]; then
+
+              echo "FOUND: $lib"
+
+              ls -lh \
+                "$OUTPUT_DIR/lib/$lib"
+
+              file \
+                "$OUTPUT_DIR/lib/$lib" || true
+
+            else
+
+              echo "MISSING: $lib"
+
+            fi
+
+          done
+
+          echo
+          echo "===== Libraries ====="
+
+          ls -lah \
+            "$OUTPUT_DIR/lib" || true
+
+          echo
+          echo "===== Headers ====="
+
+          find \
+            "$OUTPUT_DIR/include" \
+            -maxdepth 3 \
+            -type f \
+            -print || true
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
+
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+
+          export PATH="/opt/gradle-7.5/bin:$JAVA_HOME/bin:$PATH"
+
+          export ANDROID_HOME="$GITHUB_WORKSPACE/android-sdk-linux"
+
+          export NDK="$ANDROID_HOME/ndk/25.2.9519653"
+
+          unset ANDROID_SDK_ROOT
+
+          echo "========================================"
+          echo "Java"
+          echo "========================================"
+
+          java -version
+
+          echo "========================================"
+          echo "Gradle"
+          echo "========================================"
+
+          gradle --version
+
+          echo "========================================"
+          echo "Android SDK"
+          echo "========================================"
+
+          echo "$ANDROID_HOME"
+
+          echo "========================================"
+          echo "NDK"
+          echo "========================================"
+
+          echo "$NDK"
+
+          cd "$GITHUB_WORKSPACE/android"
+
+          gradle \
+            assembleDebug \
+            --stacktrace \
+            --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+
+            echo "ERROR: APK was not generated"
+
+            find \
+              "$GITHUB_WORKSPACE/android/app/build/outputs" \
+              -maxdepth 6 \
+              -type f \
+              -print || true
+
+            exit 1
+
+          fi
+
+          echo "========================================"
+          echo "APK generated successfully"
+          echo "========================================"
+
+          ls -lh "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SatDump-debug.apk
+          path: ${{ github.workspace }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ${{ github.workspace }}/android/deps/output/**/*.log
+            ${{ github.workspace }}/android/build.log
+            ${{ github.workspace }}/android/**/*.log
+          if-no-files-found: ignore
